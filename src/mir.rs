@@ -80,6 +80,10 @@ impl<E> RawExpr<E> {
     pub fn map<T>(self, mut f: impl FnMut(E) -> T) -> RawExpr<T> {
         match self.try_map::<Result<T, Infallible>>(|x| Ok(f(x))) {
             Ok(x) => x,
+
+            // this branch is unreachable, but needed to typeck
+            // it could be deleted with #![feature(exhaustive_patterns)]
+            Err(e) => match e {},
         }
     }
 

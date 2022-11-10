@@ -1,16 +1,9 @@
-use crate::hir::{Char, Token};
+use crate::hir::{Char, Digit, Digits, Token};
 use crate::{Const, Func, Var};
-use thiserror::Error;
+use anyhow::{bail, Result};
+use std::array;
 
-#[derive(Debug, Error)]
-pub enum Error {
-    #[error("numeric literal overflow")]
-    NumOverflow,
-    #[error("unexpected char {0:?}")]
-    UnexpectedChar(char),
-}
-
-pub fn lex(mut s: &str) -> Result<Vec<Token>, Error> {
+pub fn lex(mut s: &str) -> Result<Vec<Token>> {
     let mut tokens = Vec::new();
 
     loop {
@@ -29,7 +22,7 @@ pub fn lex(mut s: &str) -> Result<Vec<Token>, Error> {
     Ok(tokens)
 }
 
-fn parse_token(s: &str) -> Result<(Option<Token>, usize), Error> {
+fn parse_token(s: &str) -> Result<(Option<Token>, usize)> {
     let c1 = s.chars().next().expect("s is never empty");
 
     if c1.is_whitespace() {
@@ -40,13 +33,21 @@ fn parse_token(s: &str) -> Result<(Option<Token>, usize), Error> {
         return Ok((Some(Token::Char(c)), c1.len_utf8()));
     }
 
-    // FIXME: this doesn't work with 1.04 because 04 -> 4
-    let num_len = s.chars().take_while(|&c| matches!(c, '0'..='9')).count();
-    if num_len != 0 {
-        return s[..num_len]
-            .parse::<u64>()
-            .map(|n| (Some(Token::Digits(n)), num_len))
-            .map_err(|_| Error::NumOverflow);
+    if matches!(c1, '0'..='9' | '.') {
+        let mut iter = s
+            .chars()
+            .take_while(|c| matches!(c, '0'..='9' | '.'))
+            .map(|c| Digit::parse(c as u8).unwrap())
+            .fuse();
+        let len = iter.clone().count();
+
+        if len > 32 {
+            bail!("numeric literals longer than 32 chars are not currently supported");
+        }
+
+        let digits = Digits(array::from_fn(|_| iter.next()));
+
+        return Ok((Some(Token::Digits(digits)), len));
     }
 
     // the order here is important
@@ -73,5 +74,5 @@ fn parse_token(s: &str) -> Result<(Option<Token>, usize), Error> {
         }
     }
 
-    Err(Error::UnexpectedChar(c1))
+    bail!("unexpected char: {c1:?}")
 }

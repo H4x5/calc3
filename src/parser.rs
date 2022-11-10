@@ -3,21 +3,8 @@
 // may run on separate thread with increased stack size
 
 use crate::*;
-use anyhow::{anyhow, ensure};
-use std::fmt::Write;
 use std::iter::Iterator;
 use std::vec::IntoIter as VecIter;
-// use thiserror::Error;
-
-// #[derive(Debug, Error)]
-// enum Error {
-//     #[error("unexpected `{0:?}`")]
-//     Unexpected(IR),
-//     // #[error("expected `{0:?}`, instead got `{0:?}`")]
-//     // ExpectedButGot(Token, Token),
-//     #[error("expected more tokens")]
-//     EndOfInput,
-// }
 
 // enables pass-based hir -> mir parsing by allowing tokens and exprs to coexist
 // we are mapping sequential tokens to nested nodes
@@ -138,10 +125,8 @@ fn check_expr(ir: IR) -> Result<IR> {
 
 #[allow(clippy::type_complexity)]
 const PASSES: &[fn(&mut VecIter<IR>) -> Result<Vec<IR>>] = &[
-    // Token::{Const, Var, Differential} -> Expr::{Const, Var, Differential}
+    // Token::{Const, Var, Differential, Digits} -> Expr::{Const, Var, Differential, Lit}
     literals,
-    // Token::Digits, Char::Dot -> Expr::Lit
-    numbers,
     // Char::{OParen, CParen, VBar} -> IR::Group, Expr::Abs
     // groups,
     // ~Char::Comma
@@ -162,74 +147,15 @@ const PASSES: &[fn(&mut VecIter<IR>) -> Result<Vec<IR>>] = &[
 ];
 
 fn literals(iter: &mut VecIter<IR>) -> Result<Vec<IR>> {
-    Ok(iter
-        .map(|ir| match ir {
+    let mut out = Vec::new();
+
+    for ir in iter {
+        out.push(match ir {
             IR::Token(Token::Var(v)) => expr!(Var: v),
             IR::Token(Token::Const(c)) => expr!(Const: c),
             IR::Token(Token::Differential(d)) => expr!(Differential: d),
+            IR::Token(Token::Digits(d)) => expr!(Lit: d.as_ref().parse()?),
             _ => ir,
-        })
-        .collect())
-}
-
-fn numbers(iter: &mut VecIter<IR>) -> Result<Vec<IR>> {
-    let mut out = Vec::new();
-    let mut prev = None;
-
-    // FIXME: run this on prev after iter exhaust
-    while let Some(ir) = iter.next() {
-        let lhs = match prev.take() {
-            Some(IR::Token(Token::Digits(n))) => Some(n),
-            Some(prev) => {
-                out.push(prev);
-                None
-            }
-            None => None,
-        };
-
-        let rhs = match ir {
-            IR::Token(Token::Char(Char::Dot)) => match iter.next() {
-                Some(IR::Token(Token::Digits(n))) => Some(n),
-                // lone dot
-                _ if lhs.is_none() => bail!("unexpected `{:?}`", Token::Char(Char::Dot)),
-                Some(next) => {
-                    prev = Some(next);
-                    None
-                }
-                None => None,
-            },
-            _ => {
-                prev = Some(ir);
-                None
-            }
-        };
-
-        if lhs.is_none() && rhs.is_none() {
-            continue;
-        }
-
-        let mut fmt = String::new();
-
-        if let Some(n) = lhs {
-            write!(fmt, "{n}").unwrap();
-        }
-        if let Some(n) = rhs {
-            write!(fmt, ".{n}").unwrap();
-        }
-
-        let n: f64 = fmt
-            .parse()
-            .with_context(|| format!("invalid float literal: ({lhs:?}, {rhs:?})"))?;
-
-        out.push(expr!(Lit: n));
-    }
-
-    if let Some(last) = prev {
-        out.push(match last {
-            IR::Token(Token::Char(Char::Dot)) => bail!("unexpected `{last:?}`"),
-            IR::Token(Token::Digits(n)) =>
-                expr!(Lit: format!("{n}").parse().context("invalid float literal: (Some({n}), None)")?),
-            _ => last,
         });
     }
 

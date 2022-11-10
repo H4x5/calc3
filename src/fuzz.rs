@@ -2,14 +2,14 @@
 // permutes possible token configs and feeds them into the parser, testing for panics
 
 use super::*;
-use std::panic::{catch_unwind, resume_unwind};
+use std::panic::catch_unwind;
 
 // all useful tokens (23)
 const TOKENS: &[Token] = &[
     // Token::Const(Const::Pi),
     Token::Var(Var::X),
     // Token::Differential(Var::X),
-    Token::Digits(2),
+    // Token::Digits(2),
     Token::Func(Func::Sin),
     // Token::Func(Func::ATan2),
     // Token::Func(Func::Ln),
@@ -24,7 +24,6 @@ const TOKENS: &[Token] = &[
     // Token::Char(Char::Bang),
     // Token::Char(Char::Caret),
     // Token::Char(Char::Comma),
-    Token::Char(Char::Dot),
     // Token::Char(Char::VBar),
     // Token::Char(Char::Underscore),
     // Token::Char(Char::OParen),
@@ -50,7 +49,7 @@ pub fn fuzz<const MAX_LEN: u32>() {
 
             eprint!("  {i}: {input:?}\n   -> ");
 
-            match catch_unwind(|| parse(input.as_slice())) {
+            match catch_unwind(|| parse(&input)) {
                 Ok(Ok(_)) => {}
                 Ok(Err(e)) => {
                     eprintln!("{e:?}")
@@ -61,10 +60,17 @@ pub fn fuzz<const MAX_LEN: u32>() {
     }
 
     eprintln!("\ndone!");
-    eprintln!("panics ({}):", panics.len());
 
-    for (len, i) in panics {
-        eprintln!(" - {len}:{i}");
+    let panic_count = panics.len();
+
+    if panic_count != 0 {
+        eprintln!("panics ({panic_count}):");
+
+        for (len, i) in panics {
+            eprintln!(" - {len}:{i}");
+        }
+
+        panic!("fuzz fail :(") // fail the test
     }
 }
 

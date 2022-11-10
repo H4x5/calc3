@@ -20,13 +20,13 @@ use self::lexer::lex;
 use self::mir::*;
 use self::parser::parse;
 use self::types::*;
-use anyhow::{bail, Context as _, Result};
+use anyhow::{anyhow, bail, ensure, Context as _, Result};
 use std::env;
 
 fn main() -> Result<()> {
     println!("----------------------------------------");
     let input = env::args().nth(1).context("bad args")?;
-    println!("input: {input:?}");
+    println!("input: {input}");
 
     let hir = lex(&input).context("couldn't lex input")?;
     println!("HIR: {hir:?}");

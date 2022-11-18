@@ -262,6 +262,7 @@ fn functions(iter: &mut VecIter<IR>) -> Result<Vec<IR>> {
                     expr!(Max: args)
                 }
                 Func::Abs => expr!(Abs: take_expr(iter)?),
+                _ => todo!(),
             },
             _ => ir,
         });

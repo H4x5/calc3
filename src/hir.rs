@@ -1,4 +1,4 @@
-use crate::{Const, Func, Var};
+use crate::{define, Const, Var};
 use std::fmt::{Debug, Formatter};
 
 #[derive(Copy, Clone, Debug)]
@@ -141,5 +141,50 @@ impl Char {
             OParen => "(",
             CParen => ")",
         }
+    }
+}
+
+define! {
+    /// any sort of named/symbol (not operator) mathematical function
+    enum Func {
+        Factorial: "factorial",
+
+        ATan2: "atan2",
+
+        ASin: "asin",
+        ACos: "acos",
+        ATan: "atan",
+        ACsc: "acsc",
+        ASec: "asec",
+        ACot: "acot",
+
+        Root: "root",
+        Sqrt: "sqrt",
+        Cbrt: "cbrt",
+
+        Sign: "sign",
+        Sgn: "sgn",
+
+        Add: "add",
+        Sub: "sub",
+        Mul: "mul",
+        Div: "div",
+        Pow: "pow",
+        Exp: "exp",
+        Log: "log",
+        Abs: "abs",
+        Neg: "neg",
+
+        Sin: "sin",
+        Cos: "cos",
+        Tan: "tan",
+        Csc: "csc",
+        Sec: "sec",
+        Cot: "cot",
+
+        Min: "min",
+        Max: "max",
+
+        Ln: "ln",
     }
 }

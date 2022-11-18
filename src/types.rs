@@ -3,7 +3,7 @@
 #[macro_export]
 macro_rules! define {
     (#[doc = $tydoc:literal] enum $ty:ident {
-        $( $(#[doc = $vdoc:literal])? $v:ident: $s:literal, )+
+        $( $(#[doc = $vdoc:literal])? $v:ident: $s:literal $(| $s2:literal)?, )+
     }) => {
         #[doc = $tydoc]
         #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
@@ -14,7 +14,11 @@ macro_rules! define {
         impl $ty {
             pub fn parse(s: &str) -> Option<(Self, usize)> {
                 match () {
-                    $( () if s.starts_with($s) => Some((Self::$v, <str>::len($s))), )+
+                    $(
+                        () if s.starts_with($s) => Some((Self::$v, <str>::len($s))),
+                        // special case for sign/sgn
+                        $( () if s.starts_with($s2) => Some((Self::$v, <str>::len($s2))), )?
+                    )+
                     _ => None,
                 }
             }

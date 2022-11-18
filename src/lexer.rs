@@ -7,19 +7,22 @@ pub fn unlex(tokens: &[Token]) -> String {
     let mut out = String::new();
 
     for t in tokens {
-        let s = match t {
+        if let Token::Differential(_) = t {
+            out.push('d');
+        }
+
+        out.push_str(match t {
             Token::Char(c) => c.str(),
             Token::Func(f) => f.str(),
             Token::Const(c) => c.str(),
             Token::Digits(n) => n.as_ref(),
             Token::Var(v) => v.str(),
-            Token::Differential(d) => {
-                out.push('d');
-                d.str()
-            }
-        };
+            Token::Differential(d) => d.str(),
+        });
 
-        out.push_str(s);
+        if let Token::Char(Char::Comma) = t {
+            out.push(' ');
+        }
     }
 
     out

@@ -221,50 +221,83 @@ fn trailing_commas(iter: &mut VecIter<IR>) -> Result<Vec<IR>> {
 fn functions(iter: &mut VecIter<IR>) -> Result<Vec<IR>> {
     let mut out = Vec::new();
 
+    macro_rules! thing {
+        (match $ir:ident {
+            $( $f:ident $(=> $g:ident)?: $kind:tt ),+
+            $(,)?
+        }) => {
+            match $ir {
+                IR::Token(Token::Func(f)) => match f {
+                    $( Func::$f => thing!(@expr, $f, $($g,)? $kind), )+
+                },
+                ir => ir,
+            }
+        };
+
+        (@expr, $f:ident, 1_arg) => {
+            expr!($f: take_expr(iter)?)
+        };
+
+        (@expr, $f:ident, 2_arg) => {{
+            let [x, y]: [IR; 2] = take_args(iter)?
+                .try_into()
+                .map_err(|args| anyhow!("expected 2 args for {:?}, got {args:?}", Func::$f))?;
+            expr!($f: x, y)
+        }};
+
+        (@expr, $f:ident, vararg) => {{
+            let args = take_args(iter)?;
+            ensure!(!args.is_empty(), "vararg function {:?} requires at least 1 arg", Func::$f);
+            expr!($f: args)
+        }};
+
+        (@expr, $f:ident, $g:ident, x_is_e) => {
+            expr!($g: expr!(Const: Const::E), take_expr(iter)?)
+        };
+
+        (@expr, $f:ident, $g:ident, x_is_2) => {
+            expr!($g: expr!(Lit: 2.0), take_expr(iter)?)
+        };
+
+        (@expr, $f:ident, $g:ident, x_is_3) => {
+            expr!($g: expr!(Lit: 3.0), take_expr(iter)?)
+        };
+    }
+
     while let Some(ir) = iter.next() {
-        out.push(match ir {
-            IR::Token(Token::Func(f)) => match f {
-                Func::Sin => expr!(Sin: take_expr(iter)?),
-                Func::Cos => expr!(Cos: take_expr(iter)?),
-                Func::Tan => expr!(Tan: take_expr(iter)?),
-                Func::Csc => expr!(Csc: take_expr(iter)?),
-                Func::Sec => expr!(Sec: take_expr(iter)?),
-                Func::Cot => expr!(Cot: take_expr(iter)?),
-                Func::ASin => expr!(ASin: take_expr(iter)?),
-                Func::ACos => expr!(ACos: take_expr(iter)?),
-                Func::ATan => expr!(ATan: take_expr(iter)?),
-                Func::ATan2 => {
-                    let [x, y]: [IR; 2] = take_args(iter)?
-                        .try_into()
-                        .map_err(|g| anyhow!("expected 2 args for atan2, got {g:?}"))?;
-                    expr!(ATan2: x, y)
-                }
-                Func::ACsc => expr!(ACsc: take_expr(iter)?),
-                Func::ASec => expr!(ASec: take_expr(iter)?),
-                Func::ACot => expr!(ACot: take_expr(iter)?),
-                Func::Ln => expr!(Log: expr!(Const: Const::E), take_expr(iter)?),
-                Func::Log => {
-                    let [x, y]: [IR; 2] = take_args(iter)?
-                        .try_into()
-                        .map_err(|args| anyhow!("expected 2 args for log, got {args:?}"))?;
-                    expr!(Log: x, y)
-                }
-                Func::Sqrt => expr!(Root: expr!(Lit: 2.0), take_expr(iter)?),
-                Func::Cbrt => expr!(Root: expr!(Lit: 3.0), take_expr(iter)?),
-                Func::Min => {
-                    let args = take_args(iter)?;
-                    ensure!(!args.is_empty(), "max requires >= 1 arg");
-                    expr!(Min: args)
-                }
-                Func::Max => {
-                    let args = take_args(iter)?;
-                    ensure!(!args.is_empty(), "max requires >= 1 arg");
-                    expr!(Max: args)
-                }
-                Func::Abs => expr!(Abs: take_expr(iter)?),
-                _ => todo!(),
-            },
-            _ => ir,
+        out.push(thing! {
+            match ir {
+                Factorial: 1_arg,
+                ATan2: 2_arg,
+                ASin: 1_arg,
+                ACos: 1_arg,
+                ATan: 1_arg,
+                ACsc: 1_arg,
+                ASec: 1_arg,
+                ACot: 1_arg,
+                Root: 2_arg,
+                Sqrt => Root: x_is_2,
+                Cbrt => Root: x_is_3,
+                Sgn: 1_arg,
+                Add: 2_arg,
+                Sub: 2_arg,
+                Mul: 2_arg,
+                Div: 2_arg,
+                Pow: 2_arg,
+                Log: 2_arg,
+                Exp => Pow: x_is_e,
+                Abs: 1_arg,
+                Neg: 1_arg,
+                Sin: 1_arg,
+                Cos: 1_arg,
+                Tan: 1_arg,
+                Csc: 1_arg,
+                Sec: 1_arg,
+                Cot: 1_arg,
+                Min: vararg,
+                Max: vararg,
+                Ln => Root: x_is_e,
+            }
         });
     }
 

@@ -162,16 +162,15 @@ define! {
         Sqrt: "sqrt",
         Cbrt: "cbrt",
 
-        Sign: "sign",
-        Sgn: "sgn",
+        Sgn: "sign" | "sgn",
 
         Add: "add",
         Sub: "sub",
         Mul: "mul",
         Div: "div",
         Pow: "pow",
-        Exp: "exp",
         Log: "log",
+        Exp: "exp",
         Abs: "abs",
         Neg: "neg",
 

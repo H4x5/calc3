@@ -50,6 +50,7 @@ pub enum RawExpr<E> {
     Factorial(E),
     Abs(E),
     Neg(E),
+    Sgn(E),
 
     Sin(E),
     Cos(E),

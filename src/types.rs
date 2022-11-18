@@ -25,6 +25,16 @@ impl Const {
             _ => return None,
         })
     }
+
+    pub fn str(self) -> &'static str {
+        use Const::*;
+
+        match self {
+            E => "e",
+            Pi => "pi",
+            Phi => "phi",
+        }
+    }
 }
 
 /// a named variable
@@ -64,6 +74,23 @@ impl Var {
             _ if s.starts_with("z") => (Z, 1),
             _ => return None,
         })
+    }
+
+    pub fn str(self) -> &'static str {
+        use Var::*;
+
+        match self {
+            A => "a",
+            B => "b",
+            C => "c",
+            N => "n",
+            R => "r",
+            T => "t",
+            X => "x",
+            Y => "y",
+            Z => "z",
+            Theta => "theta",
+        }
     }
 }
 
@@ -124,5 +151,33 @@ impl Func {
             _ if s.starts_with("ln") => (Ln, 2),
             _ => return None,
         })
+    }
+
+    pub fn str(self) -> &'static str {
+        use Func::*;
+
+        // TODO
+        match self {
+            Sin => "",
+            Cos => "",
+            Tan => "",
+            Csc => "",
+            Sec => "",
+            Cot => "",
+            ASin => "",
+            ACos => "",
+            ATan => "",
+            ATan2 => "",
+            ACsc => "",
+            ASec => "",
+            ACot => "",
+            Ln => "",
+            Log => "",
+            Sqrt => "",
+            Cbrt => "",
+            Min => "",
+            Max => "",
+            Abs => "",
+        }
     }
 }

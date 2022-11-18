@@ -3,6 +3,28 @@ use crate::{Const, Func, Var};
 use anyhow::{bail, Result};
 use std::array;
 
+pub fn unlex(tokens: &[Token]) -> String {
+    let mut out = String::new();
+
+    for t in tokens {
+        let s = match t {
+            Token::Char(c) => c.str(),
+            Token::Func(f) => f.str(),
+            Token::Const(c) => c.str(),
+            Token::Digits(n) => n.as_ref(),
+            Token::Var(v) => v.str(),
+            Token::Differential(d) => {
+                out.push('d');
+                d.str()
+            }
+        };
+
+        out.push_str(s);
+    }
+
+    out
+}
+
 pub fn lex(mut s: &str) -> Result<Vec<Token>> {
     let mut tokens = Vec::new();
 

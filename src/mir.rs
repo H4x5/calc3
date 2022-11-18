@@ -76,7 +76,6 @@ pub enum RawExpr<E> {
 }
 
 impl<E> RawExpr<E> {
-    //noinspection RsNonExhaustiveMatch
     pub fn map<T>(self, mut f: impl FnMut(E) -> T) -> RawExpr<T> {
         match self.try_map::<Result<T, Infallible>>(|x| Ok(f(x))) {
             Ok(x) => x,

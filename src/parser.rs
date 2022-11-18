@@ -1,3 +1,5 @@
+#![allow(clippy::while_let_on_iterator)]
+
 // potential major problem:
 // big inputs will cause a large amt of recursion, which may blow out the stack.
 // may run on separate thread with increased stack size
@@ -30,10 +32,14 @@ macro_rules! expr {
 }
 
 pub fn parse(hir: &[Token]) -> Result<Expr> {
-    let ir = IR::Group(hir.iter().map(|&t| IR::Token(t)).collect());
+    let ir = IR::Group(hir.iter().copied().map(IR::Token).collect());
 
     // run all the passes in order, bailing if one fails
-    PASSES.iter().copied().try_fold(ir, run_pass).map(eliminate)
+    PASSES
+        .iter()
+        .copied()
+        .try_fold(ir, run_pass)
+        .map(eliminate)?
 }
 
 // this recursively descends the tree, invoking cb on each group
@@ -59,24 +65,24 @@ fn run_pass(ir: IR, cb: fn(&mut VecIter<IR>) -> Result<Vec<IR>>) -> Result<IR> {
 }
 
 // last step. at this point, all groups should™ contain exactly one expr (and are unwrapped)
-fn eliminate(ir: IR) -> Expr {
-    // FIXME: remove
+fn eliminate(ir: IR) -> Result<Expr> {
+    // FIXME: remove testing shim
     if cfg!(test) {
         eprintln!("{ir:?}");
-        return Expr::from(RawExpr::Differential(Var::Theta)); // dummy (ignored)
+        return Ok(Expr::from(RawExpr::Differential(Var::Theta))); // dummy (ignored)
     }
 
     match ir {
         IR::Token(t) => panic!("leftover token during elimination: {t:?}"),
         IR::Group(g) => {
             if g.is_empty() {
-                todo!("this branch is possible but unimplemented");
+                bail!("empty group :(");
             }
 
             let [x]: [IR; 1] = g.try_into().expect("non-singleton vec during elimination");
             eliminate(x)
         }
-        IR::Expr(e) => e.map(eliminate).into(),
+        IR::Expr(e) => Ok(e.try_map(eliminate)?.into()),
     }
 }
 
@@ -85,7 +91,6 @@ fn take_expr(iter: &mut VecIter<IR>) -> Result<IR> {
         IR::Token(Token::Char(Char::Plus)) => take_expr(iter),
         IR::Token(Token::Char(Char::Minus)) => take_expr(iter).map(|e| expr!(Neg: e)),
         IR::Token(t) => bail!("cannot take token as expr: `{t:?}`"),
-        // IR::Token(t) => panic!("take_expr called before eliminating non-char tokens: `{t:?}`"),
         // passthrough everything else (minus tokens)
         // NOTE: this doesn't recursively handle nested IR, `run_pass` does that for us.
         ir => Ok(ir),
@@ -114,11 +119,12 @@ fn take_args(iter: &mut VecIter<IR>) -> Result<Vec<IR>> {
 }
 
 // returns IR::{Group, Expr} untouched, errors on IR::Token
-fn check_expr(ir: IR) -> Result<IR> {
-    match ir {
-        IR::Token(t) => bail!("check_expr fail: {t:?}"),
-        _ => Ok(ir),
+fn check_expr(ir: &IR) -> Result<()> {
+    if let IR::Token(t) = ir {
+        bail!("cannot take token as expr: `{t:?}`");
     }
+
+    Ok(())
 }
 
 // ===== PASSES =====
@@ -128,22 +134,21 @@ const PASSES: &[fn(&mut VecIter<IR>) -> Result<Vec<IR>>] = &[
     // Token::{Const, Var, Differential, Digits} -> Expr::{Const, Var, Differential, Lit}
     literals,
     // Char::{OParen, CParen, VBar} -> IR::Group, Expr::Abs
-    // groups,
+    groups,
     // ~Char::Comma
     trailing_commas,
     // Token::Func -> Expr::__
     functions,
     // Char::Bang -> Expr::Factorial
-    // factorials,
+    factorials,
     // Char::Caret -> Expr::Pow
-    // exponents,
+    exponents,
     // Char::{Star, Slash} -> Expr::{Mul, Div}
     // mul_div,
-    // FIXME: plus/minus passes
-    // ~Char::{Plus, Minus} -> Expr::{Add, Sub}
-    // add_sub,
     // Char::{Plus, Minus} -> Expr::Neg
     // pos_neg,
+    // -> Expr::Add
+    // implied_addition,
 ];
 
 fn literals(iter: &mut VecIter<IR>) -> Result<Vec<IR>> {
@@ -154,7 +159,7 @@ fn literals(iter: &mut VecIter<IR>) -> Result<Vec<IR>> {
             IR::Token(Token::Var(v)) => expr!(Var: v),
             IR::Token(Token::Const(c)) => expr!(Const: c),
             IR::Token(Token::Differential(d)) => expr!(Differential: d),
-            IR::Token(Token::Digits(d)) => expr!(Lit: d.as_ref().parse()?),
+            IR::Token(Token::Digits(d)) => expr!(Lit: d.as_ref().parse().unwrap()),
             _ => ir,
         });
     }
@@ -163,7 +168,42 @@ fn literals(iter: &mut VecIter<IR>) -> Result<Vec<IR>> {
 }
 
 fn groups(iter: &mut VecIter<IR>) -> Result<Vec<IR>> {
-    todo!()
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    enum Kind {
+        Full,
+        Paren,
+        Abs,
+    }
+
+    fn take_group(iter: &mut VecIter<IR>, kind: Kind) -> Result<Vec<IR>> {
+        let mut out = Vec::new();
+
+        loop {
+            let ir = match iter.next() {
+                Some(x) => x,
+                None if kind == Kind::Full => return Ok(out),
+                None => bail!("expected more tokens to finish {kind:?} group"),
+            };
+
+            out.push(if let IR::Token(Token::Char(c)) = ir {
+                match c {
+                    Char::OParen => IR::Group(take_group(iter, Kind::Paren)?),
+
+                    Char::CParen if kind == Kind::Paren => return Ok(out),
+                    Char::CParen => bail!("unexpected {ir:?}"),
+
+                    Char::VBar if kind == Kind::Abs => return Ok(vec![expr!(Abs: IR::Group(out))]),
+                    Char::VBar => IR::Group(take_group(iter, Kind::Abs)?),
+
+                    _ => ir,
+                }
+            } else {
+                ir
+            });
+        }
+    }
+
+    take_group(iter, Kind::Full)
 }
 
 // eliminates trailing commas in groups to enable exprs like sin(x+1,)
@@ -230,6 +270,55 @@ fn functions(iter: &mut VecIter<IR>) -> Result<Vec<IR>> {
     Ok(out)
 }
 
+fn factorials(iter: &mut VecIter<IR>) -> Result<Vec<IR>> {
+    let mut out = Vec::new();
+    let mut prev = None;
+
+    while let Some(ir) = iter.next() {
+        if let IR::Token(Token::Char(Char::Bang)) = ir {
+            if let Some(x) = prev {
+                check_expr(&x).context("malformed arg for suffix operator `!`")?;
+                prev = Some(expr!(Factorial: x));
+            } else {
+                bail!("missing arg for suffix operator `!`");
+            }
+        } else if let Some(x) = prev.replace(ir) {
+            out.push(x);
+        }
+    }
+
+    if let Some(prev) = prev {
+        out.push(prev);
+    }
+
+    Ok(out)
+}
+
+fn exponents(iter: &mut VecIter<IR>) -> Result<Vec<IR>> {
+    let mut out = Vec::new();
+    let mut prev = None;
+
+    while let Some(ir) = iter.next() {
+        if let IR::Token(Token::Char(Char::Caret)) = ir {
+            if let Some(x) = prev {
+                check_expr(&x).context("malformed lhs for infix operator `^`")?;
+                let y = take_expr(iter).context("malformed rhs for infix operator `^`")?;
+                prev = Some(expr!(Pow: x, y));
+            } else {
+                bail!("missing lhs for infix operator `^`");
+            }
+        } else if let Some(x) = prev.replace(ir) {
+            out.push(x);
+        }
+    }
+
+    if let Some(prev) = prev {
+        out.push(prev);
+    }
+
+    Ok(out)
+}
+
 // ===== OLD SHIT =====
 
 // ===== NOTES =====
@@ -277,53 +366,6 @@ fn functions(iter: &mut VecIter<IR>) -> Result<Vec<IR>> {
 // sin -5! -> sin(-5)!
 // -5! -> -(5!)
 // ^ this is possible when negatives are parsed with take_expr
-
-#[derive(Copy, Clone, Eq, PartialEq)]
-enum GroupKind {
-    // (x)
-    Paren,
-    // |x|
-    Abs,
-    // x
-    Full,
-}
-
-// precedence level 1: groups (paren and abs)
-// is recursive for nested groups
-// handles comma seperated paren args
-// eliminates every Char::{OParen, CParen, VBar}
-//
-// 8*(9+10) -> `(8 * (9 + 10))`
-// 5+(6*(7+4))+9 -> `(5 + (6 * (7 + 4)) + 9)`
-// atan2(x+4, y) -> `(atan2 (x + 4 , y))`
-#[cfg(FALSE)]
-fn group(ir: &mut impl Iterator<Item = IR>, kind: GroupKind) -> Result<IR> {
-    let mut g = Vec::new();
-
-    loop {
-        let i = match ir.next() {
-            Some(x) => x,
-            None if kind == GroupKind::Full => return Ok(IR::Group(g)),
-            None => bail!(Error::EndOfInput),
-        };
-
-        g.push(if let IR::Token(Token::Char(c)) = i {
-            match c {
-                Char::OParen => group(ir, GroupKind::Paren)?,
-
-                Char::CParen if kind == GroupKind::Paren => return Ok(IR::Group(g)),
-                Char::CParen => bail!(Error::Unexpected(i)),
-
-                Char::VBar if kind == GroupKind::Abs => return Ok(IR::Group(g)),
-                Char::VBar => group(ir, GroupKind::Abs)?,
-
-                _ => i,
-            }
-        } else {
-            i
-        });
-    }
-}
 
 // ALL ACTUAL PASSES:
 // - basic literals: Token::{Const, Var, Differential} -> Expr::{Const, Var, Differential}
@@ -373,24 +415,6 @@ fn group(ir: &mut impl Iterator<Item = IR>, kind: GroupKind) -> Result<IR> {
 // groups represent the (nested) sequential
 // at the end, all groups should™ contain exactly one expr (and can be unwrapped)
 // R: No
-
-// eliminates Token::Char(Char::{OParen, CParen, VBar})
-fn group2(ir: IR) -> Result<IR> {
-    enum Mode {
-        Paren,
-        Abs,
-        Full,
-    }
-
-    fn tokens(t: &mut impl Iterator<Item = IR>, mode: Mode) -> Result<IR> {
-        todo!()
-    }
-
-    match ir {
-        IR::Group(g) => tokens(&mut g.into_iter(), Mode::Full),
-        _ => todo!(),
-    }
-}
 
 // ops passes. these work on sequential tokens, invoking a transformation callback on each group.
 #[cfg(FALSE)]

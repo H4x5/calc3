@@ -123,4 +123,23 @@ impl Char {
             _ => return None,
         })
     }
+
+    pub fn str(self) -> &'static str {
+        use Char::*;
+
+        match self {
+            Plus => "+",
+            Minus => "-",
+            Star => "*",
+            Slash => "/",
+            Percent => "%",
+            Bang => "!",
+            Caret => "^",
+            Comma => ",",
+            Underscore => "_",
+            VBar => "|",
+            OParen => "(",
+            CParen => ")",
+        }
+    }
 }

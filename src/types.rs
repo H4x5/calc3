@@ -1,5 +1,3 @@
-#![allow(clippy::single_char_pattern)]
-
 #[macro_export]
 macro_rules! define {
     (#[doc = $tydoc:literal] enum $ty:ident {

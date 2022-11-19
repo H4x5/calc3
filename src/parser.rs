@@ -1,9 +1,5 @@
 #![allow(clippy::while_let_on_iterator)]
 
-// potential major problem:
-// big inputs will cause a large amt of recursion, which may blow out the stack.
-// may run on separate thread with increased stack size
-
 use crate::*;
 use std::iter::Iterator;
 use std::vec::IntoIter as VecIter;
@@ -16,6 +12,12 @@ enum IR {
     // expr args are IR, not exprs
     Expr(BoxExpr<IR>),
     Group(Vec<IR>),
+}
+
+impl IR {
+    fn is_token(&self) -> bool {
+        matches!(self, IR::Token(_))
+    }
 }
 
 impl From<RawExpr<IR>> for IR {
@@ -39,7 +41,7 @@ pub fn parse(hir: &[Token]) -> Result<Expr> {
         .iter()
         .copied()
         .try_fold(ir, run_pass)
-        .map(eliminate)?
+        .and_then(eliminate)
 }
 
 // this recursively descends the tree, invoking cb on each group
@@ -55,7 +57,7 @@ fn run_pass(ir: IR, cb: fn(&mut VecIter<IR>) -> Result<Vec<IR>>) -> Result<IR> {
                 // map -> collect -> into_iter to bail if err and eagerly evaluate map (basically try_map)
                 // also we need a VecIter (from Vec::into_iter) to pass into cb
                 .map(|x| run_pass(x, cb))
-                .collect::<Result<Vec<_>>>()?
+                .try_collect::<Vec<IR>>()?
                 .into_iter();
             let out = cb(&mut iter)?;
             assert_eq!(iter.len(), 0, "cb didn't exhaust iter");
@@ -66,12 +68,6 @@ fn run_pass(ir: IR, cb: fn(&mut VecIter<IR>) -> Result<Vec<IR>>) -> Result<IR> {
 
 // last step. at this point, all groups should™ contain exactly one expr (and are unwrapped)
 fn eliminate(ir: IR) -> Result<Expr> {
-    // FIXME: remove testing shim
-    if cfg!(test) {
-        eprintln!("{ir:?}");
-        return Ok(Expr::from(RawExpr::Differential(Var::Theta))); // dummy (ignored)
-    }
-
     match ir {
         IR::Token(t) => panic!("leftover token during elimination: {t:?}"),
         IR::Group(g) => {
@@ -99,23 +95,28 @@ fn take_expr(iter: &mut VecIter<IR>) -> Result<IR> {
 
 // each item in the returned vec is a comma seperated elem
 // expects trailing_commas to have run before
-fn take_args(iter: &mut VecIter<IR>) -> Result<Vec<IR>> {
+fn take_args(ir: IR) -> Result<Vec<IR>> {
+    let IR::Group(g) = ir else {
+        bail!("cannot take non paren group as args: {ir:?}");
+    };
+
     let mut out = Vec::new();
     let mut cur = Vec::new();
 
-    loop {
-        match iter.next() {
-            Some(IR::Token(Token::Char(Char::Comma))) => {
-                out.push(IR::Group(cur));
-                cur = Vec::new();
-            }
-            Some(ir) => out.push(ir),
-            None => {
-                out.push(IR::Group(cur));
-                return Ok(out);
-            }
+    for ir in g {
+        if let IR::Token(Token::Char(Char::Comma)) = ir {
+            out.push(IR::Group(cur));
+            cur = Vec::new();
+        } else {
+            cur.push(ir);
         }
     }
+
+    if !cur.is_empty() {
+        out.push(IR::Group(cur));
+    }
+
+    Ok(out)
 }
 
 // returns IR::{Group, Expr} untouched, errors on IR::Token
@@ -132,23 +133,15 @@ fn check_expr(ir: &IR) -> Result<()> {
 #[allow(clippy::type_complexity)]
 const PASSES: &[fn(&mut VecIter<IR>) -> Result<Vec<IR>>] = &[
     // Token::{Const, Var, Differential, Digits} -> Expr::{Const, Var, Differential, Lit}
-    literals,
-    // Char::{OParen, CParen, VBar} -> IR::Group, Expr::Abs
-    groups,
-    // ~Char::Comma
-    trailing_commas,
+    literals, // Char::{OParen, CParen, VBar} -> IR::Group, Expr::Abs
+    groups,   // ~Char::Comma
+    // trailing_commas, // FIXME
     // Token::Func -> Expr::__
-    functions,
-    // Char::Bang -> Expr::Factorial
-    factorials,
-    // Char::Caret -> Expr::Pow
-    exponents,
-    // Char::{Star, Slash} -> Expr::{Mul, Div}
-    // mul_div,
-    // Char::{Plus, Minus} -> Expr::Neg
-    // pos_neg,
-    // -> Expr::Add
-    // implied_addition,
+    functions,  // Char::Bang -> Expr::Factorial
+    factorials, // Char::Caret -> Expr::Pow
+    exponents,  // Char::{Star, Slash} -> Expr::{Mul, Div}
+    mul_div,    // Char::{Plus, Minus} -> Expr::{Add, Neg}
+    add_sub,
 ];
 
 fn literals(iter: &mut VecIter<IR>) -> Result<Vec<IR>> {
@@ -211,7 +204,7 @@ fn groups(iter: &mut VecIter<IR>) -> Result<Vec<IR>> {
 fn trailing_commas(iter: &mut VecIter<IR>) -> Result<Vec<IR>> {
     let mut out = iter.collect::<Vec<_>>();
 
-    if let Some(IR::Token(Token::Char(Char::Comma))) = out.last() {
+    while let Some(IR::Token(Token::Char(Char::Comma))) = out.last() {
         out.pop();
     }
 
@@ -235,18 +228,19 @@ fn functions(iter: &mut VecIter<IR>) -> Result<Vec<IR>> {
         };
 
         (@expr, $f:ident, 1_arg) => {
-            expr!($f: take_expr(iter)?)
+            expr!($f: take_expr(iter).with_context(|| format!("malformed arg for {:?} function", Func::$f))?)
         };
 
         (@expr, $f:ident, 2_arg) => {{
-            let [x, y]: [IR; 2] = take_args(iter)?
+            let next = iter.next().context("cannot take empty args")?;
+            let [x, y]: [IR; 2] = take_args(next)?
                 .try_into()
-                .map_err(|args| anyhow!("expected 2 args for {:?}, got {args:?}", Func::$f))?;
+                .map_err(|args: Vec<IR>| anyhow!("expected 2 args for {:?}, got {}", Func::$f, args.len()))?;
             expr!($f: x, y)
         }};
 
         (@expr, $f:ident, vararg) => {{
-            let args = take_args(iter)?;
+            let args = take_args(iter.next().context("cannot take empty args")?)?;
             ensure!(!args.is_empty(), "vararg function {:?} requires at least 1 arg", Func::$f);
             expr!($f: args)
         }};
@@ -353,188 +347,59 @@ fn exponents(iter: &mut VecIter<IR>) -> Result<Vec<IR>> {
     Ok(out)
 }
 
-// ===== OLD SHIT =====
+fn mul_div(iter: &mut VecIter<IR>) -> Result<Vec<IR>> {
+    let mut out = Vec::new();
+    let mut prev = None;
 
-// ===== NOTES =====
-// dont forget PEMDAS!
-// (or GF!NEMDAS!) (group, function, factorial, negative, exponent, mul/div, add/sub)
-// how to parse 3/4+5^6-7*(8+9)?
-// - still need some recursion for paren handling
-// - is implied multiplication always the same as explicit multiplication?
-// - negative higher precedence than factorial
-// - factorial higher precedence than exp
-// - lookaheads?
-// - sequentially or in prio passes?
-// - passes eliminated recursive calls
-// - functions as operators with precedence
-// - |x| -> |(x)| (logically)
-// - pass priority for pemdas
-// - grouping symbols (everything inside parsed as its own expr)
-// - what abt |x + |y + 7|^3|
-//   - vbar groups aren't always sequential
-//   - could parse it as a recursive group requiring another vbar at the end
-//   - RESOLUTION: when in a vbar group, another vbar unconditionally ends it.
-//     when not in a vbar group, a vbar unconditionally starts a vbar group.
-//     thus, to get the desired result, type |x + (|y + 7|)^3|.
-//   - NOTE: this may be possible depending on how take_expr & take_group semantics work
-//
-// is a+b+c add(a, add(b, c)) or add(add(a, b), c)?
-// i think first
-// just because of how exprs get parsed
-//
-// in order to handle things like operator precedence, we run multiple passes on the HIR.
-// passes (PEMDAS):
-// - grouping symbols (parens, abs vbars `|`)
-// - ~ functions
-// - factorial suffix operator `!`
-// REMOVED: negative prefix operator `-` (happens implicitly during take_expr and maybe at the end)
-// - exponents `^`z
-// - multiplication `*` and division `/`
-// - addition `+` and subtraction `-`
-// - prefix neg op
-//
-// -5! is -(5!) not (-5)!
-//   ie factorial is stronger than negatives
-// what abt sin -5!
-// sin -5 -> sin(-5)
-// sin -5! -> sin(-5)!
-// -5! -> -(5!)
-// ^ this is possible when negatives are parsed with take_expr
-
-// ALL ACTUAL PASSES:
-// - basic literals: Token::{Const, Var, Differential} -> Expr::{Const, Var, Differential}
-// - (positive) numeric literals: Char::Dot, Token::Digits -> Expr::Lit
-// - groups: Char::{OParen, CParen, VBar} -> IR::Group, Expr::Abs
-// - (maybe trailing comma elim)
-// - functions: Token::Func, Char::Comma -> Expr::__
-// ops:
-// - factorial: Char::Bang -> Expr::Factorial
-// - exponents: Char::Caret -> Expr::Pow
-// - mul/div: Char::{Star, Slash} -> Expr::{Mul, Div}
-// - add/sub: Char::{Plus, Minus} -> Expr::{Add, Sub}
-// finale:
-// - elimination (IR -> Expr)
-
-// function parsing:
-// - single arg: take_expr
-// - multi arg: take_args, verify correct amt
-// - vararg: take_args
-
-// take_expr:
-// takes first IR
-// if Char::Minus, add Expr::Neg(_) and repeat until non-Char::Minus
-// if Char::Plus, ignore (sin +x -> sin x)
-// if any other Char, error
-
-// Thoughts: could take_expr parse abs/paren groups?
-// this is going back towards sequential parsing and may not work
-// also I like the pass based model more, both conceptually and to implement
-// I think no, overcomplicated things and defeats the group priority stuff (kinda?)
-// ======
-// ALSO: we only take_expr for the rhs, never for lhs
-// this means -5^2 -> -(5^2)
-// and 5^-2 -> 5^(-2)
-// which I think is a good thing
-// NOTE: how does this work with leftover neg prefix ops?
-//   do we run one last "remaining neg op" pass? maybe
-
-// take_args:
-// splits a group by commas
-// (6 + 7 , 9 , 14 ^ 2) -> [(6 + 7), (9), (14 ^ 2)]
-// IR::Group: Char::Comma -> Vec<IR::Group>
-
-// IR::Token could just be IR::{Char, Func}? (if first 2 passes can happen before everything else)
-// maybe no? too confusing...
-// we are converting from sequential tokens to nested Exprs
-// groups represent the (nested) sequential
-// at the end, all groups should™ contain exactly one expr (and can be unwrapped)
-// R: No
-
-// ops passes. these work on sequential tokens, invoking a transformation callback on each group.
-#[cfg(FALSE)]
-mod seq_pass {
-    use super::*;
-
-    // FIXME: abstract out similar logic here
-
-    // factorial `!`
-    fn factorial(iter: &mut dyn Iterator<Item = IR>) -> Result<Vec<IR>> {
-        let mut out = Vec::new();
-        let mut prev = None;
-
-        while let Some(ir) = iter.next() {
-            if let IR::Token(Token::Char(Char::Bang)) = ir {
-                if let Some(x) = prev {
-                    // FIXME: verify x is not a token
-                    prev = Some(expr!(Factorial: x));
-                } else {
-                    bail!("missing target for suffix operator `!`");
-                }
-            } else if let Some(x) = prev.replace(ir) {
-                out.push(x);
+    while let Some(ir) = iter.next() {
+        if let IR::Token(Token::Char(Char::Star)) = ir {
+            if let Some(x) = prev {
+                check_expr(&x).context("malformed lhs for infix operator `*`")?;
+                let y = take_expr(iter).context("malformed rhs for infix operator `*`")?;
+                prev = Some(expr!(Mul: x, y));
+            } else {
+                bail!("missing lhs for infix operator `*`");
             }
+        } else if let IR::Token(Token::Char(Char::Slash)) = ir {
+            if let Some(x) = prev {
+                check_expr(&x).context("malformed lhs for infix operator `/`")?;
+                let y = take_expr(iter).context("malformed rhs for infix operator `/`")?;
+                prev = Some(expr!(Div: x, y));
+            } else {
+                bail!("missing lhs for infix operator `/`");
+            }
+        } else if let Some(x) = prev {
+            // this is the implied multiplication
+            if !x.is_token() && !ir.is_token() {
+                prev = Some(expr!(Mul: x, ir));
+            } else {
+                out.push(x);
+                prev = Some(ir);
+            }
+        } else {
+            prev = Some(ir);
         }
-
-        Ok(out)
     }
 
-    // exponents `^`
-    fn exp(iter: &mut dyn Iterator<Item = IR>) -> Result<Vec<IR>> {
-        let mut out = Vec::new();
-        let mut prev = None;
-
-        while let Some(ir) = iter.next() {
-            if let IR::Token(Token::Char(Char::Caret)) = ir {
-                if let Some(x) = prev {
-                    // FIXME: verify x is not a token
-                    let y = take_expr(iter).context("malformed rhs for infix operator `^`")?;
-                    prev = Some(expr!(Pow: x, y));
-                } else {
-                    bail!("missing lhs for infix operator `^`");
-                }
-            } else if let Some(x) = prev.replace(ir) {
-                out.push(x);
-            }
-        }
-
-        if let Some(prev) = prev {
-            out.push(prev);
-        }
-
-        Ok(out)
+    if let Some(prev) = prev {
+        out.push(prev);
     }
 
-    // multiplication `*` and division `/`
-    fn mul_div(iter: &mut dyn Iterator<Item = IR>) -> Result<Vec<IR>> {
-        let mut out = Vec::new();
-        let mut prev = None;
+    Ok(out)
+}
 
-        while let Some(ir) = iter.next() {
-            if let IR::Token(Token::Char(Char::Star)) = ir {
-                if let Some(x) = prev {
-                    // FIXME: verify x is not a token
-                    let y = take_expr(iter).context("malformed rhs for infix operator `*`")?;
-                    prev = Some(expr!(Mul: x, y));
-                } else {
-                    bail!("missing lhs for infix operator `*`");
-                }
-            } else if let IR::Token(Token::Char(Char::Slash)) = ir {
-                if let Some(x) = prev {
-                    // FIXME: verify x is not a token
-                    let y = take_expr(iter).context("malformed rhs for infix operator `/`")?;
-                    prev = Some(expr!(Div: x, y));
-                } else {
-                    bail!("missing lhs for infix operator `/`");
-                }
-            } else if let Some(x) = prev.replace(ir) {
-                out.push(x);
-            }
-        }
+fn add_sub(iter: &mut VecIter<IR>) -> Result<Vec<IR>> {
+    let Some(mut prev) = iter.next() else {
+        return Ok(Vec::new())
+    };
+    check_expr(&prev).context("malformed lhs for add/sub")?;
 
-        if let Some(prev) = prev {
-            out.push(prev);
-        }
-
-        Ok(out)
+    while iter.len() > 0 {
+        prev = expr!(
+            Add: prev,
+            take_expr(iter).context("malformed rhs for add/sub")?
+        );
     }
+
+    Ok(vec![prev])
 }

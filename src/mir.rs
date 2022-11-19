@@ -115,6 +115,7 @@ impl<E> RawExpr<E> {
                 Factorial(x) => Factorial(f(x)?),
                 Abs(x) => Abs(f(x)?),
                 Neg(x) => Neg(f(x)?),
+                Sgn(x) => Sgn(f(x)?),
 
                 Sin(x) => Sin(f(x)?),
                 Cos(x) => Cos(f(x)?),

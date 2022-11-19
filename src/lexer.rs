@@ -21,7 +21,7 @@ pub fn unlex(tokens: &[Token]) -> String {
         });
 
         if let Token::Char(Char::Comma) = t {
-            out.push(' ');
+            // out.push(' '); // FIXME
         }
     }
 

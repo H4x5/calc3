@@ -46,7 +46,7 @@ fn main() -> Result<()> {
     println!("HIR: {hir:?}");
 
     let mir = parse(&hir).context("couldn't parse input")?;
-    println!("MIR: {mir:#?}");
+    println!("MIR: {mir:?}");
 
     Ok(())
 }

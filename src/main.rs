@@ -1,5 +1,11 @@
-#![feature(try_trait_v2, try_trait_v2_residual, try_blocks, iterator_try_collect)]
-#![feature(let_else)]
+#![feature(
+    box_patterns,
+    box_syntax,
+    try_trait_v2,
+    try_trait_v2_residual,
+    try_blocks,
+    iterator_try_collect
+)]
 #![allow(dead_code, unused_variables)]
 #![deny(unsafe_code)]
 
@@ -13,6 +19,7 @@ mod fuzz;
 mod hir;
 mod lexer;
 mod mir;
+mod opt;
 mod parser;
 mod types;
 
@@ -21,26 +28,25 @@ use self::lexer::lex;
 use self::mir::*;
 use self::parser::parse;
 use self::types::*;
-use crate::fuzz::fuzz;
 use anyhow::{anyhow, bail, ensure, Context as _, Result};
 use std::env;
 
 // FIXME
 fn main() -> Result<()> {
-    // cargo run --release 2> out.txt
-    env::set_var("RUST_BACKTRACE", "0");
-
-    fuzz::<6>();
-
-    // println!("----------------------------------------");
-    // let input = env::args().nth(1).context("bad args")?;
-    // println!("input: {input}");
+    // // cargo run --release 2> out.txt
+    // env::set_var("RUST_BACKTRACE", "0");
     //
-    // let hir = lex(&input).context("couldn't lex input")?;
-    // println!("HIR: {hir:?}");
-    //
-    // let mir = parse(&hir).context("couldn't parse input")?;
-    // println!("MIR: {mir:?}");
+    // fuzz::fuzz::<6>();
+
+    println!("----------------------------------------");
+    let input = env::args().nth(1).context("bad args")?;
+    println!("input: {input}");
+
+    let hir = lex(&input).context("couldn't lex input")?;
+    println!("HIR: {hir:?}");
+
+    let mir = parse(&hir).context("couldn't parse input")?;
+    println!("MIR: {mir:#?}");
 
     Ok(())
 }

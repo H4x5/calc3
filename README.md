@@ -5,4 +5,4 @@ This program parses mathematical expressions. Created as an exercise in simple c
 To run:
 - install Rust ([rustup.rs](https://rustup.rs/))
 - clone the repo
-- `cargo run -- "<your expr>"`
+- `cargo +nightly run -- "<your expr>"`
